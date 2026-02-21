@@ -15,7 +15,6 @@ use Combodo\iTop\Application\UI\Base\Component\Form\FormUIBlockFactory;
 use Combodo\iTop\Application\UI\Base\Component\Html\Html;
 use Combodo\iTop\Application\UI\Base\Component\Html\HtmlFactory;
 use Combodo\iTop\Application\UI\Base\Component\Input\InputUIBlockFactory;
-use Combodo\iTop\Application\UI\Base\Component\Input\TextArea;
 use Combodo\iTop\Application\UI\Base\Component\Panel\PanelUIBlockFactory;
 use Combodo\iTop\Application\UI\Base\Component\Title\TitleUIBlockFactory;
 use Combodo\iTop\Application\UI\Base\Component\Toolbar\ToolbarUIBlockFactory;
@@ -114,6 +113,12 @@ $oAppContext = new ApplicationContext();
 $oP = new iTopWebPage(Dict::S('UI:RunQuery:Title'));
 $oP->SetBreadCrumbEntry('ui-tool-runquery', Dict::S('Menu:RunQueriesMenu'), Dict::S('Menu:RunQueriesMenu+'), '', 'fas fa-terminal', iTopWebPage::ENUM_BREADCRUMB_ENTRY_ICON_TYPE_CSS_CLASSES);
 
+$sAceDir = 'node_modules/ace-builds/src-min/';
+$oP->LinkScriptFromAppRoot($sAceDir.'ace.js');
+$oP->LinkScriptFromAppRoot($sAceDir.'theme-eclipse.js');
+$oP->LinkScriptFromAppRoot($sAceDir.'ext-searchbox.js');
+$oP->LinkScriptFromAppRoot('js/ace-modes/mode-oql.js');
+
 // Main program
 $sExpression = utils::ReadParam('expression', '', false, 'raw_data');
 $sEncoding = utils::ReadParam('encoding', 'oql');
@@ -175,18 +180,33 @@ try
 	$oHiddenParams = new Html($oAppContext->GetForForm());
 	$oQueryForm->AddSubBlock($oHiddenParams);
 
-	//--- Query textarea
-	$oQueryTextArea = new TextArea('expression', utils::EscapeHtml($sExpression), 'expression', 120, 8);
-	$oQueryTextArea->AddCSSClasses(['ibo-input-text', 'ibo-query-oql', 'ibo-is-code']);
-	$oQueryForm->AddSubBlock($oQueryTextArea);
+	//--- Query editor (Ace)
+	$sExpressionEscaped = utils::EscapeHtml($sExpression);
+	$oQueryForm->AddSubBlock(InputUIBlockFactory::MakeForHidden('expression', $sExpressionEscaped, 'expression_hidden'));
+	$oQueryForm->AddSubBlock(new Html('<div id="oql_editor" class="ibo-query-oql-editor">'.utils::EscapeHtml($sExpression).'</div>'));
 
-	$oP->add_ready_script(<<<JS
-$("#expression").select();
-$("#expression").on('keyup', function (oEvent) {
-    if ((oEvent.ctrlKey || oEvent.metaKey) && oEvent.key === 'Enter') {
-        $(this).closest('form').trigger('submit');
+	$oP->add_ready_script(<<<'JS'
+var oqlEditor = ace.edit("oql_editor");
+oqlEditor.setTheme("ace/theme/eclipse");
+oqlEditor.getSession().setMode("ace/mode/oql");
+oqlEditor.getSession().setUseWrapMode(true);
+oqlEditor.setShowPrintMargin(false);
+
+var hiddenInput = document.getElementById('expression_hidden');
+oqlEditor.getSession().on('change', function() {
+    hiddenInput.value = oqlEditor.getSession().getValue();
+});
+
+oqlEditor.commands.addCommand({
+    name: 'submitQuery',
+    bindKey: {win: "Ctrl-Enter", mac: "Cmd-Enter"},
+    exec: function(editor) {
+        $(hiddenInput).closest('form').trigger('submit');
     }
 });
+
+oqlEditor.focus();
+oqlEditor.selectAll();
 JS
 	);
 
@@ -321,13 +341,15 @@ JS
 					$sSyntaxErrorText .= "<p>Suggesting: $sFixedExpressionHtml</p>";
 					$oSyntaxErrorPanel->AddSubBlock(new Html($sSyntaxErrorText));
 
-					$sEscapedExpression = json_encode(utils::EscapeHtml($sFixedExpression));
+					$sEscapedExpression = json_encode($sFixedExpression);
 					$oUseSuggestedQueryButton = ButtonUIBlockFactory::MakeForDestructiveAction('Use this query');
 					$oUseSuggestedQueryButton->SetOnClickJsCode(
 <<<JS
-let \$oQueryTextarea = $('textarea[name=expression]');
-\$oQueryTextarea.val($sEscapedExpression).focus();
-\$oQueryTextarea.closest('form').submit();
+var oqlEditor = ace.edit("oql_editor");
+oqlEditor.setValue($sEscapedExpression, -1);
+$('#expression_hidden').val($sEscapedExpression);
+oqlEditor.focus();
+$('#expression_hidden').closest('form').submit();
 JS
 					);
 						$oSyntaxErrorPanel->AddSubBlock($oUseSuggestedQueryButton);
